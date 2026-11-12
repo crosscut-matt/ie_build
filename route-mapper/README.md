@@ -7,7 +7,7 @@ and your data stays on your computer: files are read in the browser and never up
 ### How to use
 
 1. Download `route-mapper.html` and double-click it to open it in Chrome, Edge or Firefox.
-   You need an internet connection for the map tiles.
+   You need an internet connection for the map. Map tiles come from Esri and need no API key.
 2. Export the GPS history from your tracking system, for example yesterday's data.
 3. Drag the file onto the page, or click **Add GPS files**. You can add several files at once.
 
