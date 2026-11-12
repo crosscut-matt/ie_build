@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driver Route Mapper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: fixed header, control sidebar on the left, full-bleed map on the right; stacks map-over-sidebar on phones. */
+:root {
+  --bg: #eef1f4;
+  --panel: #ffffff;
+  --ink: #16212b;
+  --muted: #5a6774;
+  --line: #d6dde3;
+  --accent: #0f6b4f;      /* highway-sign green */
+  --accent-ink: #ffffff;
+  --warn: #b5470b;
+  --soft: #f5f7f9;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1317; --panel: #151c21; --ink: #e3e9ee; --muted: #93a0ab; --line: #28333b;
+    --accent: #3cbf8c; --accent-ink: #06231a; --warn: #f0894a; --soft: #1b242a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1317; --panel: #151c21; --ink: #e3e9ee; --muted: #93a0ab; --line: #28333b;
+  --accent: #3cbf8c; --accent-ink: #06231a; --warn: #f0894a; --soft: #1b242a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); display: grid; grid-template-rows: auto 1fr; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+.brand .sign { width: 30px; height: 30px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; }
+.brand h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+.brand small { color: var(--muted); font-size: 12px; display: block; margin-top: -2px; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.small { padding: 3px 8px; font-size: 12px; }
+.btn:disabled { opacity: .5; cursor: default; }
+select { border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 6px 8px; }
+label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+
+.app { display: grid; grid-template-columns: 370px 1fr; min-height: 0; }
+aside { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; min-height: 0; }
+.section { padding: 14px 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.section h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.section h2 .links { display: flex; gap: 10px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font-size: 12px; }
+
+.drop { border: 1.5px dashed var(--line); border-radius: 8px; padding: 16px; text-align: center; color: var(--muted); cursor: pointer; background: var(--soft); }
+.drop strong { color: var(--ink); display: block; font-size: 15px; margin-bottom: 2px; }
+.drop.over, body.dragging .drop { border-color: var(--accent); color: var(--ink); }
+.formats { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+textarea { width: 100%; min-height: 80px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); color: var(--ink); font: 12px/1.4 var(--mono); padding: 8px; resize: vertical; }
+details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details[open] > summary { margin-bottom: 8px; }
+
+.msg { font-size: 13px; padding: 8px 10px; border-radius: 6px; background: var(--soft); border-left: 3px solid var(--warn); }
+.msg.ok { border-left-color: var(--accent); }
+
+.settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.settings label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.settings input[type=number] { width: 100%; border: 1px solid var(--line); background: var(--soft); border-radius: 6px; padding: 5px 8px; }
+.settings .check { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; color: var(--ink); font-size: 13px; }
+
+.file { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; }
+.file .top { display: flex; gap: 8px; align-items: center; }
+.file .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.file .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mapping { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; font-size: 12px; }
+.mapping select { padding: 3px 6px; font-size: 12px; min-width: 0; width: 100%; }
+
+.tracks { display: grid; gap: 4px; }
+.track { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.track:hover { background: var(--soft); }
+.track.sel { border-color: var(--accent); background: var(--soft); }
+.track.off { opacity: .5; }
+.swatch { width: 14px; height: 14px; border-radius: 3px; }
+.track .t-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track .t-sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.track > div { min-width: 0; }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.stat { background: var(--panel); padding: 8px 10px; }
+.stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.stat .v { font-family: var(--mono); font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.stoplist { display: grid; gap: 2px; }
+.stop { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; padding: 6px 4px; border-radius: 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.stop:hover { background: var(--soft); }
+.stop .n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; }
+.stop .when { font-size: 13px; }
+.stop .dur { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.stop a { font-size: 11px; color: var(--accent); }
+.empty { color: var(--muted); font-size: 13px; }
+
+#mapwrap { position: relative; min-height: 0; }
+#map { position: absolute; inset: 0; background: var(--soft); }
+.player { position: absolute; left: 12px; right: 12px; bottom: 22px; z-index: 600; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.18); flex-wrap: wrap; }
+.player input[type=range] { flex: 1; min-width: 140px; accent-color: var(--accent); }
+.player .clock { font-family: var(--mono); font-size: 13px; min-width: 150px; font-variant-numeric: tabular-nums; }
+.player .who { font-weight: 600; font-size: 13px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playbtn { width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; display: grid; place-items: center; flex: none; }
+
+.welcome { position: absolute; inset: 0; z-index: 500; display: grid; place-items: center; pointer-events: none; }
+.welcome .card { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px 24px; max-width: 420px; margin: 16px; box-shadow: 0 6px 24px rgba(0,0,0,.12); }
+.welcome h3 { margin: 0 0 6px; font-size: 18px; text-wrap: balance; }
+.welcome p { margin: 0 0 14px; color: var(--muted); }
+.welcome .row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* map markers */
+.pin { width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1.5px rgba(0,0,0,.45); }
+.pin.start { background: #1f9d55; }
+.pin.end { background: #d64545; border-radius: 3px; }
+.stopmk { width: 24px; height: 24px; border-radius: 50%; background: #fff; border: 3px solid; display: grid; place-items: center; font: 700 11px/1 var(--sans); color: #16212b; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.cursor { width: 20px; height: 20px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.5), 0 0 0 7px rgba(255,255,255,.35); }
+.leaflet-popup-content { font: 13px/1.45 var(--sans); }
+.leaflet-popup-content b { font-weight: 600; }
+.pop-k { color: #5a6774; }
+
+@media (max-width: 820px) {
+  body { height: auto; display: block; }
+  .app { display: flex; flex-direction: column-reverse; }
+  #mapwrap { height: 62vh; }
+  aside { border-right: 0; overflow: visible; }
+  .player .clock { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="sign" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="19" r="2.2" fill="var(--accent-ink)"/><circle cx="19" cy="5" r="2.2"/><path d="M6.5 17.5 C 10 14, 6 10, 11 9 S 16 7, 17.5 6.5"/></svg>
+    </div>
+    <div><h1>Driver Route Mapper</h1><small>GPS history, mapped in your browser</small></div>
+  </div>
+  <div class="tools">
+    <button class="btn primary" id="openBtn" type="button">Add GPS files</button>
+    <label class="inline">Map <select id="baseSel">
+      <option value="voyager">Streets</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+      <option value="sat">Satellite</option>
+    </select></label>
+    <label class="inline">Units <select id="unitSel"><option value="mi">Miles</option><option value="km">Kilometers</option></select></label>
+  </div>
+  <input type="file" id="fileIn" multiple hidden accept=".csv,.tsv,.txt,.gpx,.kml,.json,.geojson,.xlsx,.xls">
+</header>
+
+<div class="app">
+  <aside>
+    <div class="section">
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add GPS files">
+        <strong>Drop GPS files here</strong>
+        or click to browse. You can add several at once.
+        <div class="formats">CSV · Excel · GPX · KML · GeoJSON</div>
+      </div>
+      <details>
+        <summary>Or paste coordinates</summary>
+        <textarea id="pasteBox" placeholder="Paste CSV with a header row, or one &quot;lat, lon&quot; pair per line"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px"><button class="btn small" id="pasteBtn" type="button">Map pasted data</button></div>
+      </details>
+      <div id="msgs" style="display:grid;gap:6px"></div>
+    </div>
+
+    <div class="section" id="detailSec" hidden>
+      <h2><span id="detailTitle">Route</span><span class="links"><button class="linkbtn" id="zoomSel" type="button">Zoom to route</button><button class="linkbtn" id="closeSel" type="button">Close</button></span></h2>
+      <div class="stats" id="stats"></div>
+      <h2>Stops <span class="links" id="stopCount"></span></h2>
+      <div class="stoplist" id="stoplist"></div>
+    </div>
+
+    <div class="section">
+      <h2>Routes <span class="links"><button class="linkbtn" id="showAll" type="button">Show all</button><button class="linkbtn" id="hideAll" type="button">Hide all</button></span></h2>
+      <div class="tracks" id="tracks"><div class="empty">No routes yet. Add a file or load the sample.</div></div>
+    </div>
+
+    <div class="section">
+      <h2>Settings</h2>
+      <div class="settings">
+        <label>Stop = parked at least (min)<input type="number" id="stopMin" min="1" max="240" step="1" value="5"></label>
+        <label>Stop radius (feet)<input type="number" id="stopRadius" min="30" max="2000" step="10" value="250"></label>
+        <label class="check"><input type="checkbox" id="byDay"> Split each driver's route by day</label>
+        <label class="check"><input type="checkbox" id="showStops" checked> Show stop markers on map</label>
+        <label class="check"><input type="checkbox" id="dropJumps" checked> Ignore GPS jumps (impossible speeds)</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Files <span class="links"><button class="linkbtn" id="exportStops" type="button">Export stops CSV</button><button class="linkbtn" id="clearAll" type="button">Clear all</button></span></h2>
+      <div id="files" style="display:grid;gap:8px"><div class="empty">Files you add appear here. Your data never leaves this computer.</div></div>
+    </div>
+  </aside>
+
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div class="welcome" id="welcome">
+      <div class="card">
+        <h3>Map yesterday's routes in a few seconds</h3>
+        <p>Drop the GPS export from your tracking system onto this page. Each driver gets their own colored route with start, end and every stop marked.</p>
+        <div class="row"><button class="btn primary" id="openBtn2" type="button">Add GPS files</button><button class="btn" id="sampleBtn" type="button">Load sample data</button></div>
+      </div>
+    </div>
+    <div class="player" id="player" hidden>
+      <button class="playbtn" id="playBtn" type="button" aria-label="Play"></button>
+      <span class="who" id="playWho"></span>
+      <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Route timeline">
+      <span class="clock" id="clock">–</span>
+      <select id="rate" aria-label="Playback speed">
+        <option value="60">60×</option><option value="300" selected>300×</option><option value="900">900×</option><option value="3600">3600×</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const COLORS = ["#2563eb", "#e11d48", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#c026d3", "#65a30d", "#ea580c", "#0f766e", "#9333ea", "#be123c"];
+const ICON_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>';
+const ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
+
+/* ---------- settings ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("drm." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("drm." + k, JSON.stringify(v)); } catch {} }
+};
+const S = {
+  units: store.get("units", "mi"),
+  base: store.get("base", "voyager"),
+  stopMin: store.get("stopMin", 5),
+  stopRadiusFt: store.get("stopRadiusFt", 250),
+  byDay: store.get("byDay", false),
+  showStops: store.get("showStops", true),
+  dropJumps: store.get("dropJumps", true),
+};
+
+/* ---------- map ---------- */
+const map = L.map("map", { preferCanvas: true, zoomControl: true }).setView([39.5, -98.35], 4);
+const BASES = {
+  voyager: ["https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'],
+  light: ["https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'],
+  dark: ["https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'],
+  sat: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", "Imagery &copy; Esri, Maxar, Earthstar Geographics"],
+};
+let baseLayer = null;
+function setBase(k) {
+  if (!BASES[k]) k = "voyager";
+  if (baseLayer) map.removeLayer(baseLayer);
+  baseLayer = L.tileLayer(BASES[k][0], { attribution: BASES[k][1], maxZoom: 19, subdomains: "abcd" }).addTo(map);
+  S.base = k; store.set("base", k); $("#baseSel").value = k;
+}
+setBase(S.base);
+
+/* ---------- geometry ---------- */
+const R_EARTH = 6371000;
+function hav(a, b) {
+  const toR = Math.PI / 180, dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLon / 2) ** 2;
+  return 2 * R_EARTH * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+const fmtDist = m => S.units === "mi" ? (m / 1609.344).toFixed(m < 16093 ? 1 : 0) + " mi" : (m / 1000).toFixed(m < 10000 ? 1 : 0) + " km";
+const fmtSpeed = mps => S.units === "mi" ? Math.round(mps * 2.23694) + " mph" : Math.round(mps * 3.6) + " km/h";
+function fmtDur(ms) {
+  if (ms == null || !isFinite(ms)) return "–";
+  const m = Math.round(ms / 60000), h = Math.floor(m / 60);
+  return h ? `${h}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`;
+}
+const fmtTime = t => t == null ? "–" : new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const fmtDate = t => t == null ? "" : new Date(t).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+const fmtDateTime = t => t == null ? "–" : new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+const dayKey = t => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+/* ---------- value parsing ---------- */
+function num(v) {
+  if (typeof v === "number") return v;
+  if (v == null) return NaN;
+  let s = String(v).trim();
+  if (!s) return NaN;
+  let sign = 1;
+  const hemi = s.match(/\s*([NSEW])$/i) || s.match(/^([NSEW])\s*/i);
+  if (hemi) { if (/[SW]/i.test(hemi[1])) sign = -1; s = s.replace(/[NSEW]/ig, "").trim(); }
+  s = s.replace(/°/g, "");
+  if (s.includes(",") && !s.includes(".")) s = s.replace(",", ".");
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n * sign;
+}
+function fromNum(n) {
+  if (!isFinite(n)) return null;
+  if (n > 1e11) return n;                 // epoch ms
+  if (n > 1e8) return n * 1000;           // epoch seconds
+  if (n > 20000 && n < 80000) {           // Excel serial date, treated as local time
+    const d = new Date(Math.round((n - 25569) * 864e5));
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()).getTime();
+  }
+  return null;
+}
+function build(y, mo, d, h, mi, se, ms, ap, tz) {
+  y = +y; if (y < 100) y += 2000;
+  h = +(h || 0); mi = +(mi || 0); se = +(se || 0); ms = ms ? +String(ms).slice(0, 3).padEnd(3, "0") : 0;
+  if (ap) { ap = ap.toLowerCase(); if (ap === "pm" && h < 12) h += 12; if (ap === "am" && h === 12) h = 0; }
+  if (tz) {
+    let off = 0;
+    if (!/^(z|utc|gmt)$/i.test(tz)) { const m = tz.match(/([+-])(\d{2}):?(\d{2})?/); off = (m[1] === "-" ? -1 : 1) * (+m[2] * 60 + +(m[3] || 0)); }
+    return Date.UTC(y, mo - 1, +d, h, mi, se, ms) - off * 60000;
+  }
+  return new Date(y, mo - 1, +d, h, mi, se, ms).getTime();
+}
+const TIME_TAIL = String.raw`(?:[T\s,]+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?\s*([ap]\.?m\.?)?)?\s*(z|utc|gmt|[+-]\d{2}:?\d{2})?$`;
+const RE_YMD = new RegExp(String.raw`^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})` + TIME_TAIL, "i");
+const RE_MDY = new RegExp(String.raw`^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})` + TIME_TAIL, "i");
+const RE_CLOCK = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap]\.?m\.?)?$/i;
+function parseTime(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date) return isNaN(v) ? null : v.getTime();
+  if (typeof v === "number") return fromNum(v);
+  const s = String(v).trim().replace(/\s+/g, " ");
+  if (!s) return null;
+  if (/^-?\d+(\.\d+)?$/.test(s)) return fromNum(+s);
+  const clean = ap => ap ? ap.replace(/\./g, "") : ap;
+  let m = s.match(RE_YMD);
+  if (m) return build(m[1], m[2], m[3], m[4], m[5], m[6], m[7], clean(m[8]), m[9]);
+  m = s.match(RE_MDY);
+  if (m) {
+    let mo = +m[1], d = +m[2];
+    if (mo > 12 && d <= 12) [mo, d] = [d, mo]; // day/month order
+    return build(m[3], mo, d, m[4], m[5], m[6], m[7], clean(m[8]), m[9]);
+  }
+  m = s.match(RE_CLOCK);
+  if (m) return build(2000, 1, 1, m[1], m[2], m[3], 0, clean(m[4]));
+  const t = Date.parse(s);
+  return isNaN(t) ? null : t;
+}
+
+/* ---------- column detection ---------- */
+const norm = h => String(h).toLowerCase().replace(/[^a-z0-9]/g, "");
+function detectColumns(headers, sample) {
+  const H = headers.map(h => ({ h, n: norm(h) }));
+  const find = tests => { for (const t of tests) { const f = H.find(x => t(x.n)); if (f) return f.h; } return ""; };
+  const m = {};
+  m.lat = find([n => ["lat", "latitude", "gpslat", "gpslatitude", "latdd", "latdeg", "latitudedeg"].includes(n), n => n.includes("latitude"), n => /^(gps|start|device)?lat(\d|$|deg)/.test(n), n => n === "y"]);
+  m.lon = find([n => ["lon", "lng", "long", "longitude", "gpslon", "gpslng", "gpslong", "gpslongitude", "londd", "londeg"].includes(n), n => n.includes("longitude"), n => /^(gps|start|device)?(lon|lng)(\d|$|deg)/.test(n), n => n === "x"]);
+  m.latlon = "";
+  if (!m.lat || !m.lon) {
+    m.latlon = find([n => /latlng|latlon|latlong|coordinates|coords|location|position|gpslocation|point/.test(n)]);
+    if (m.latlon && sample && !pairRe.test(String(sample[m.latlon] ?? ""))) m.latlon = "";
+  }
+  const notDur = n => !/duration|idle|elapsed|total|seconds|minutes|hours|drive|engine|zone/.test(n);
+  m.time = find([
+    n => /timestamp|datetime/.test(n) && notDur(n),
+    n => /(gps|event|device|fix|record|report|log|utc|local)(time|date)/.test(n) && notDur(n),
+    n => n.includes("time") && notDur(n),
+    n => n.includes("date"),
+    n => ["when", "recordedat", "createdat", "occurredat"].includes(n),
+  ]);
+  m.time2 = "";
+  if (m.time && sample) {
+    const v = String(sample[m.time] ?? "").trim();
+    const dateCol = H.find(x => x.n.includes("date") && x.h !== m.time)?.h;
+    const timeCol = H.find(x => x.n.includes("time") && notDur(x.n) && x.h !== m.time)?.h;
+    if (RE_CLOCK.test(v) && dateCol) { m.time2 = m.time; m.time = dateCol; }
+    else if (/^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}$/.test(v) && timeCol && RE_CLOCK.test(String(sample[timeCol] ?? "").trim())) m.time2 = timeCol;
+  }
+  m.driver = find([
+    n => /driver|operator|employee|tech/.test(n) && !/id$/.test(n),
+    n => /vehicle|truck|unit|asset|van|fleet|device|tracker/.test(n) && !/id$|type|status|speed|odometer/.test(n),
+    n => /driver|vehicle|truck|unit|asset|device|imei/.test(n),
+    n => n === "name" || n === "label",
+  ]);
+  m.speed = find([n => /speed|mph|kph|kmh/.test(n)]);
+  return m;
+}
+const pairRe = /(-?\d{1,3}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)/;
+
+/* ---------- datasets ---------- */
+let datasets = [];   // {id, name, kind:'rows'|'points', rows, headers, map, points, error}
+let nextId = 1;
+
+function rowsToPoints(ds) {
+  const m = ds.map, pts = [];
+  let bad = 0;
+  for (const row of ds.rows) {
+    let lat, lon;
+    if (m.lat && m.lon) { lat = num(row[m.lat]); lon = num(row[m.lon]); }
+    else if (m.latlon) { const p = String(row[m.latlon] ?? "").match(pairRe); if (p) { lat = +p[1]; lon = +p[2]; } }
+    if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180 || (lat === 0 && lon === 0)) { bad++; continue; }
+    let t = null;
+    if (m.time) {
+      if (m.time2) {
+        const dv = row[m.time], tv = row[m.time2];
+        if (dv instanceof Date || typeof dv === "number") {
+          const base = parseTime(dv), clock = parseTime(tv);
+          if (base != null) {
+            const bd = new Date(base);
+            if (clock != null) { const c = new Date(clock); t = new Date(bd.getFullYear(), bd.getMonth(), bd.getDate(), c.getHours(), c.getMinutes(), c.getSeconds()).getTime(); }
+            else t = base;
+          }
+        } else t = parseTime(`${dv ?? ""} ${tv ?? ""}`.trim());
+      } else t = parseTime(row[m.time]);
+    }
+    pts.push({ lat, lon, t, driver: m.driver ? String(row[m.driver] ?? "").trim() : "", speed: m.speed ? row[m.speed] : undefined, src: ds.name });
+  }
+  ds.skipped = bad;
+  return pts;
+}
+
+function addRowsDataset(name, rows, headers) {
+  headers = headers.filter(h => h != null && String(h).trim() !== "");
+  const ds = { id: nextId++, name, kind: "rows", rows, headers, map: detectColumns(headers, rows[0]) };
+  ds.points = rowsToPoints(ds);
+  datasets.push(ds);
+  if (!ds.points.length) note(`${name}: couldn't find latitude/longitude columns. Pick them under Files below.`);
+  else if (!ds.map.time) note(`${name}: no time column found, so points are drawn in file order and stops can't be detected. Pick a time column under Files if there is one.`);
+  return ds;
+}
+function addPointsDataset(name, points) {
+  const ds = { id: nextId++, name, kind: "points", points };
+  datasets.push(ds);
+  if (!points.length) note(`${name}: no coordinates found in this file.`);
+  return ds;
+}
+
+/* ---------- file readers ---------- */
+const baseName = n => n.replace(/\.[^.]+$/, "");
+const readText = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsText(f); });
+const readBuf = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsArrayBuffer(f); });
+let xlsxLoading = null;
+function loadXLSX() {
+  if (window.XLSX) return Promise.resolve();
+  return xlsxLoading ??= new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload = res; s.onerror = () => { xlsxLoading = null; rej(new Error("Couldn't load the Excel reader. Check your internet connection, or save the sheet as CSV.")); };
+    document.head.appendChild(s);
+  });
+}
+
+async function handleFiles(files) {
+  for (const f of files) {
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    try {
+      if (ext === "gpx") addPointsDataset(f.name, parseGPX(await readText(f), baseName(f.name)));
+      else if (ext === "kml") addPointsDataset(f.name, parseKML(await readText(f), baseName(f.name)));
+      else if (ext === "json" || ext === "geojson") parseJSONFile(await readText(f), f.name);
+      else if (ext === "xlsx" || ext === "xls") {
+        await loadXLSX();
+        const wb = XLSX.read(await readBuf(f), { type: "array", cellDates: true });
+        for (const sn of wb.SheetNames) {
+          const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "", raw: true });
+          if (!rows.length) continue;
+          const label = wb.SheetNames.length > 1 ? `${f.name} · ${sn}` : f.name;
+          addRowsDataset(label, rows, Object.keys(rows[0]));
+        }
+      } else parseDelimited(await readText(f), f.name);
+    } catch (e) { note(`${f.name}: ${e.message || e}`); }
+  }
+  rebuild(true);
+}
+
+function parseDelimited(text, name) {
+  text = text.replace(/^﻿/, "");
+  const firstLine = text.split(/\r?\n/).find(l => l.trim()) || "";
+  // No header row: lines of "lat, lon"
+  if (/^\s*-?\d/.test(firstLine) && pairRe.test(firstLine)) {
+    const res = Papa.parse(text.trim(), { header: false, skipEmptyLines: true, dynamicTyping: false });
+    const rows = res.data.map(r => {
+      if (r.length >= 2 && isFinite(num(r[0])) && isFinite(num(r[1]))) return { Latitude: r[0], Longitude: r[1], Time: r[2] ?? "", Driver: r[3] ?? "" };
+      const p = r.join(",").match(pairRe); return p ? { Latitude: p[1], Longitude: p[2], Time: "", Driver: "" } : null;
+    }).filter(Boolean);
+    const headers = ["Latitude", "Longitude"]; if (rows.some(r => r.Time)) headers.push("Time"); if (rows.some(r => r.Driver)) headers.push("Driver");
+    return addRowsDataset(name, rows, headers);
+  }
+  const res = Papa.parse(text, { header: true, skipEmptyLines: "greedy", dynamicTyping: false, transformHeader: h => h.trim() });
+  if (!res.data.length) throw new Error("the file is empty or isn't a table.");
+  return addRowsDataset(name, res.data, res.meta.fields || Object.keys(res.data[0]));
+}
+
+const tagText = (el, tag) => { const x = el.getElementsByTagName(tag)[0]; return x ? x.textContent.trim() : ""; };
+function xmlDoc(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("the file isn't valid XML.");
+  return doc;
+}
+function parseGPX(text, fallback) {
+  const doc = xmlDoc(text), pts = [];
+  const groups = [...doc.getElementsByTagName("trk"), ...doc.getElementsByTagName("rte")];
+  const push = (el, driver) => {
+    const lat = +el.getAttribute("lat"), lon = +el.getAttribute("lon");
+    if (!isFinite(lat) || !isFinite(lon)) return;
+    const sp = tagText(el, "speed");
+    pts.push({ lat, lon, t: parseTime(tagText(el, "time")), driver, speed: sp ? (+sp * (S.units === "mi" ? 2.23694 : 3.6)).toFixed(0) + (S.units === "mi" ? " mph" : " km/h") : undefined });
+  };
+  if (groups.length) {
+    for (const g of groups) {
+      const nameEl = [...g.children].find(c => c.localName === "name");
+      const driver = nameEl ? nameEl.textContent.trim() : fallback;
+      for (const p of [...g.getElementsByTagName("trkpt"), ...g.getElementsByTagName("rtept")]) push(p, driver);
+    }
+  } else for (const p of doc.getElementsByTagName("wpt")) push(p, fallback);
+  return pts;
+}
+function parseKML(text, fallback) {
+  const doc = xmlDoc(text), pts = [];
+  const docName = (() => { const d = doc.getElementsByTagName("Document")[0]; const n = d && [...d.children].find(c => c.localName === "name"); return n ? n.textContent.trim() : fallback; })();
+  for (const pm of doc.getElementsByTagName("Placemark")) {
+    const nm = [...pm.children].find(c => c.localName === "name")?.textContent.trim();
+    const tracks = [...pm.getElementsByTagName("gx:Track"), ...pm.getElementsByTagName("Track")];
+    if (tracks.length) {
+      for (const tr of tracks) {
+        const whens = [...tr.getElementsByTagName("when")].map(w => parseTime(w.textContent.trim()));
+        const coords = [...tr.getElementsByTagName("gx:coord"), ...tr.getElementsByTagName("coord")];
+        coords.forEach((c, i) => { const [lon, lat] = c.textContent.trim().split(/\s+/).map(Number); if (isFinite(lat) && isFinite(lon)) pts.push({ lat, lon, t: whens[i] ?? null, driver: nm || docName }); });
+      }
+      continue;
+    }
+    const lines = pm.getElementsByTagName("LineString");
+    if (lines.length) {
+      for (const ls of lines) for (const tup of tagText(ls, "coordinates").split(/\s+/)) {
+        const [lon, lat] = tup.split(",").map(Number); if (isFinite(lat) && isFinite(lon)) pts.push({ lat, lon, t: null, driver: nm || docName });
+      }
+      continue;
+    }
+    const pt = pm.getElementsByTagName("Point")[0];
+    if (pt) {
+      const [lon, lat] = tagText(pt, "coordinates").split(",").map(Number);
+      const folder = pm.parentElement && pm.parentElement.localName === "Folder" ? [...pm.parentElement.children].find(c => c.localName === "name")?.textContent.trim() : "";
+      const when = tagText(pm, "when") || tagText(pm, "begin");
+      if (isFinite(lat) && isFinite(lon)) pts.push({ lat, lon, t: parseTime(when), driver: folder || docName });
+    }
+  }
+  return pts;
+}
+function parseJSONFile(text, name) {
+  const j = JSON.parse(text);
+  if (j && (j.type === "FeatureCollection" || j.type === "Feature")) {
+    const feats = j.type === "Feature" ? [j] : j.features || [];
+    const pointRows = [], linePts = [];
+    for (const f of feats) {
+      const g = f.geometry, p = f.properties || {};
+      if (!g) continue;
+      if (g.type === "Point") pointRows.push({ ...p, __lon: g.coordinates[0], __lat: g.coordinates[1] });
+      else if (g.type === "LineString" || g.type === "MultiLineString") {
+        const lines = g.type === "LineString" ? [g.coordinates] : g.coordinates;
+        const times = p.coordTimes || p.times || [];
+        const dm = detectColumns(Object.keys(p), p);
+        const driver = String((dm.driver && p[dm.driver]) || p.name || baseName(name));
+        let k = 0;
+        for (const line of lines) for (const c of line) { const tt = Array.isArray(times[0]) ? null : times[k]; linePts.push({ lat: c[1], lon: c[0], t: parseTime(tt), driver }); k++; }
+      }
+    }
+    if (linePts.length) addPointsDataset(name, linePts);
+    if (pointRows.length) {
+      const headers = Object.keys(pointRows[0]);
+      const ds = { id: nextId++, name: linePts.length ? name + " · points" : name, kind: "rows", rows: pointRows, headers };
+      ds.map = { ...detectColumns(headers.filter(h => !h.startsWith("__")), pointRows[0]), lat: "__lat", lon: "__lon", latlon: "" };
+      ds.points = rowsToPoints(ds); datasets.push(ds);
+    }
+    if (!linePts.length && !pointRows.length) note(`${name}: no points or lines found.`);
+    return;
+  }
+  let arr = Array.isArray(j) ? j : null;
+  if (!arr && j && typeof j === "object") arr = Object.values(j).find(v => Array.isArray(v) && v.length && typeof v[0] === "object");
+  if (!arr || !arr.length) throw new Error("couldn't find a list of GPS records in this JSON.");
+  const headers = [...new Set(arr.slice(0, 50).flatMap(o => Object.keys(o || {})))];
+  addRowsDataset(name, arr, headers);
+}
+
+/* ---------- tracks ---------- */
+let tracks = [];         // computed
+const hidden = new Set();
+const colorOf = new Map();
+let selectedKey = null;
+const layers = L.layerGroup().addTo(map);
+
+function trackColor(key) {
+  if (!colorOf.has(key)) colorOf.set(key, COLORS[colorOf.size % COLORS.length]);
+  return colorOf.get(key);
+}
+
+function buildTracks() {
+  const groups = new Map();
+  for (const ds of datasets) for (const p of ds.points) {
+    const who = p.driver || baseName(ds.name.split(" · ")[0]);
+    const key = S.byDay && p.t != null ? `${who}|${dayKey(p.t)}` : who;
+    if (!groups.has(key)) groups.set(key, { key, driver: who, pts: [] });
+    groups.get(key).pts.push(p);
+  }
+  const out = [];
+  for (const g of groups.values()) {
+    let pts = g.pts;
+    const timed = pts.every(p => p.t != null);
+    if (timed) pts = pts.slice().sort((a, b) => a.t - b.t);
+    // drop duplicate consecutive fixes and GPS jumps
+    const clean = [];
+    for (const p of pts) {
+      const prev = clean[clean.length - 1];
+      if (prev && prev.lat === p.lat && prev.lon === p.lon && prev.t === p.t) continue;
+      if (S.dropJumps && prev && timed) {
+        const d = hav(prev, p), dt = (p.t - prev.t) / 1000;
+        if (d > 800 && (dt <= 0 || d / dt > 70)) continue; // > ~155 mph
+      }
+      clean.push(p);
+    }
+    if (!clean.length) continue;
+    out.push(computeStats({ key: g.key, driver: g.driver, day: S.byDay && timed ? clean[0].t : null, pts: clean, timed }));
+  }
+  out.sort((a, b) => a.driver.localeCompare(b.driver, undefined, { numeric: true }) || (a.start ?? 0) - (b.start ?? 0));
+  return out;
+}
+
+function computeStats(tr) {
+  const p = tr.pts, n = p.length;
+  let dist = 0, maxSp = 0;
+  for (let i = 1; i < n; i++) {
+    const d = hav(p[i - 1], p[i]); dist += d;
+    if (tr.timed) {
+      // speed over a window of at least 20 s to smooth GPS noise
+      let j = i - 1; while (j > 0 && p[i].t - p[j].t < 20000) j--;
+      const dt = (p[i].t - p[j].t) / 1000;
+      if (dt >= 20) { let dd = 0; for (let k = j + 1; k <= i; k++) dd += hav(p[k - 1], p[k]); maxSp = Math.max(maxSp, dd / dt); }
+    }
+  }
+  tr.dist = dist; tr.maxSpeed = tr.timed ? maxSp : null;
+  tr.start = tr.timed ? p[0].t : null; tr.end = tr.timed ? p[n - 1].t : null;
+  tr.stops = tr.timed ? findStops(p) : [];
+  tr.stopTime = tr.stops.reduce((s, x) => s + (x.end - x.start), 0);
+  return tr;
+}
+
+function findStops(p) {
+  const R = S.stopRadiusFt * 0.3048, minMs = S.stopMin * 60000, stops = [];
+  let i = 0;
+  while (i < p.length) {
+    let j = i, sLat = p[i].lat, sLon = p[i].lon, c = 1;
+    while (j + 1 < p.length) {
+      const centroid = { lat: sLat / c, lon: sLon / c };
+      if (hav(centroid, p[j + 1]) > R) break;
+      j++; sLat += p[j].lat; sLon += p[j].lon; c++;
+    }
+    if (j > i && p[j].t - p[i].t >= minMs) {
+      stops.push({ lat: sLat / c, lon: sLon / c, start: p[i].t, end: p[j].t, i, j });
+      i = j + 1;
+    } else i++;
+  }
+  return stops;
+}
+
+/* ---------- rendering ---------- */
+function rebuild(fit) {
+  stopPlayback();
+  tracks = buildTracks();
+  if (selectedKey && !tracks.find(t => t.key === selectedKey)) selectedKey = null;
+  $("#welcome").hidden = datasets.length > 0;
+  drawMap();
+  renderTrackList();
+  renderFiles();
+  renderDetail();
+  if (fit) fitVisible();
+}
+
+function nearestIdx(tr, latlng) {
+  let best = 0, bd = Infinity;
+  const q = { lat: latlng.lat, lon: latlng.lng };
+  for (let i = 0; i < tr.pts.length; i++) { const d = hav(q, tr.pts[i]); if (d < bd) { bd = d; best = i; } }
+  return best;
+}
+function pointPopup(tr, i) {
+  const p = tr.pts[i];
+  let sp = "";
+  if (p.speed !== undefined && p.speed !== "") sp = `<div><span class="pop-k">Speed:</span> ${esc(p.speed)}</div>`;
+  else if (tr.timed && i > 0) { const dt = (p.t - tr.pts[i - 1].t) / 1000; if (dt > 0) sp = `<div><span class="pop-k">Speed:</span> ${fmtSpeed(hav(tr.pts[i - 1], p) / dt)}</div>`; }
+  return `<b>${esc(tr.driver)}</b><div><span class="pop-k">Time:</span> ${p.t != null ? esc(fmtDateTime(p.t)) : "not in file"}</div>${sp}<div class="pop-k" style="font-size:12px">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}</div>`;
+}
+
+function drawMap() {
+  layers.clearLayers();
+  const anySel = !!selectedKey;
+  for (const tr of tracks) {
+    if (hidden.has(tr.key)) continue;
+    const color = trackColor(tr.key), sel = tr.key === selectedKey;
+    const ll = tr.pts.map(p => [p.lat, p.lon]);
+    const casing = L.polyline(ll, { color: "#ffffff", weight: sel ? 9 : 6, opacity: anySel && !sel ? 0.25 : 0.85, interactive: false });
+    const line = L.polyline(ll, { color, weight: sel ? 5.5 : 3.5, opacity: anySel && !sel ? 0.3 : 0.95 });
+    line.on("click", e => {
+      if (selectedKey !== tr.key) { select(tr.key); }
+      const i = nearestIdx(tr, e.latlng);
+      L.popup().setLatLng([tr.pts[i].lat, tr.pts[i].lon]).setContent(pointPopup(tr, i)).openOn(map);
+    });
+    line.bindTooltip(esc(tr.driver), { sticky: true });
+    layers.addLayer(casing); layers.addLayer(line);
+    if (anySel && !sel) continue;
+    const first = tr.pts[0], last = tr.pts[tr.pts.length - 1];
+    L.marker([first.lat, first.lon], { icon: L.divIcon({ className: "", html: '<div class="pin start"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 500 })
+      .bindPopup(`<b>${esc(tr.driver)}</b><div>Start · ${esc(fmtDateTime(first.t))}</div>`).addTo(layers);
+    if (tr.pts.length > 1)
+      L.marker([last.lat, last.lon], { icon: L.divIcon({ className: "", html: '<div class="pin end"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 500 })
+        .bindPopup(`<b>${esc(tr.driver)}</b><div>End · ${esc(fmtDateTime(last.t))}</div>`).addTo(layers);
+    if (S.showStops) tr.stops.forEach((s, k) => {
+      L.marker([s.lat, s.lon], { icon: L.divIcon({ className: "", html: `<div class="stopmk" style="border-color:${color}">${k + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }), zIndexOffset: 400 })
+        .bindPopup(stopPopup(tr, s, k)).addTo(layers);
+    });
+  }
+}
+function gmaps(lat, lon) { return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}`; }
+function stopPopup(tr, s, k) {
+  return `<b>${esc(tr.driver)} · Stop ${k + 1}</b><div>${fmtTime(s.start)} – ${fmtTime(s.end)} (${fmtDur(s.end - s.start)})</div><div style="font-size:12px"><a href="${gmaps(s.lat, s.lon)}" target="_blank" rel="noopener">Open in Google Maps</a></div>`;
+}
+
+function fitVisible() {
+  const b = L.latLngBounds([]);
+  for (const tr of tracks) if (!hidden.has(tr.key)) for (const p of tr.pts) b.extend([p.lat, p.lon]);
+  if (b.isValid()) map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
+}
+function fitTrack(tr) {
+  const b = L.latLngBounds(tr.pts.map(p => [p.lat, p.lon]));
+  if (b.isValid()) map.fitBounds(b, { padding: [50, 50], paddingBottomRight: [50, 110], maxZoom: 17 });
+}
+
+function trackSub(tr) {
+  const bits = [fmtDist(tr.dist)];
+  if (tr.timed) bits.push(fmtDur(tr.end - tr.start), `${tr.stops.length} stop${tr.stops.length === 1 ? "" : "s"}`);
+  else bits.push(`${tr.pts.length} points`);
+  return bits.join(" · ");
+}
+function renderTrackList() {
+  const el = $("#tracks");
+  if (!tracks.length) { el.innerHTML = `<div class="empty">No routes yet. Add a file or load the sample.</div>`; return; }
+  el.innerHTML = tracks.map(tr => `
+    <div class="track${tr.key === selectedKey ? " sel" : ""}${hidden.has(tr.key) ? " off" : ""}" data-key="${esc(tr.key)}">
+      <input type="checkbox" ${hidden.has(tr.key) ? "" : "checked"} aria-label="Show ${esc(tr.driver)}" data-toggle="1">
+      <span class="swatch" style="background:${trackColor(tr.key)}"></span>
+      <div><div class="t-name">${esc(tr.driver)}</div>
+      <div class="t-sub">${tr.timed ? esc(fmtDate(tr.start)) + " · " + fmtTime(tr.start) + "–" + fmtTime(tr.end) + "<br>" : ""}${trackSub(tr)}</div></div>
+    </div>`).join("");
+}
+$("#tracks").addEventListener("click", e => {
+  const row = e.target.closest(".track"); if (!row) return;
+  const key = row.dataset.key;
+  if (e.target.dataset.toggle) {
+    e.target.checked ? hidden.delete(key) : hidden.add(key);
+    if (hidden.has(key) && selectedKey === key) selectedKey = null;
+    drawMap(); renderTrackList(); renderDetail(); return;
+  }
+  select(key === selectedKey ? null : key, true);
+});
+
+function select(key, zoom) {
+  stopPlayback();
+  selectedKey = key;
+  if (key) hidden.delete(key);
+  drawMap(); renderTrackList(); renderDetail();
+  const tr = tracks.find(t => t.key === key);
+  if (tr && zoom) fitTrack(tr);
+}
+
+function renderDetail() {
+  const tr = tracks.find(t => t.key === selectedKey);
+  $("#detailSec").hidden = !tr;
+  setupPlayer(tr);
+  if (!tr) return;
+  $("#detailTitle").textContent = tr.driver + (tr.day ? " · " + fmtDate(tr.day) : "");
+  const drive = tr.timed ? (tr.end - tr.start) - tr.stopTime : null;
+  const stats = [
+    ["Distance", fmtDist(tr.dist)],
+    ["Start", tr.timed ? fmtTime(tr.start) : "–"],
+    ["End", tr.timed ? fmtTime(tr.end) : "–"],
+    ["Total time", tr.timed ? fmtDur(tr.end - tr.start) : "–"],
+    ["Moving", tr.timed ? fmtDur(drive) : "–"],
+    ["Stopped", tr.timed ? fmtDur(tr.stopTime) : "–"],
+    ["Max speed", tr.maxSpeed ? fmtSpeed(tr.maxSpeed) : "–"],
+    ["Avg moving", tr.timed && drive > 60000 ? fmtSpeed(tr.dist / (drive / 1000)) : "–"],
+    ["GPS points", tr.pts.length.toLocaleString()],
+  ];
+  $("#stats").innerHTML = stats.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  $("#stopCount").textContent = tr.timed ? `${tr.stops.length} over ${S.stopMin} min` : "";
+  const color = trackColor(tr.key);
+  $("#stoplist").innerHTML = !tr.timed
+    ? `<div class="empty">This file has no timestamps, so stops can't be worked out.</div>`
+    : !tr.stops.length ? `<div class="empty">No stops of ${S.stopMin} minutes or longer.</div>`
+    : tr.stops.map((s, k) => `
+      <div class="stop" data-k="${k}">
+        <span class="n" style="background:${color}">${k + 1}</span>
+        <div><div class="when">${fmtTime(s.start)} – ${fmtTime(s.end)}</div><a href="${gmaps(s.lat, s.lon)}" target="_blank" rel="noopener">Open in Google Maps</a></div>
+        <span class="dur">${fmtDur(s.end - s.start)}</span>
+      </div>`).join("");
+}
+$("#stoplist").addEventListener("click", e => {
+  if (e.target.closest("a")) return;
+  const row = e.target.closest(".stop"); if (!row) return;
+  const tr = tracks.find(t => t.key === selectedKey), k = +row.dataset.k, s = tr.stops[k];
+  map.setView([s.lat, s.lon], Math.max(map.getZoom(), 16));
+  L.popup().setLatLng([s.lat, s.lon]).setContent(stopPopup(tr, s, k)).openOn(map);
+});
+$("#closeSel").onclick = () => select(null);
+$("#zoomSel").onclick = () => { const tr = tracks.find(t => t.key === selectedKey); if (tr) fitTrack(tr); };
+$("#showAll").onclick = () => { hidden.clear(); drawMap(); renderTrackList(); fitVisible(); };
+$("#hideAll").onclick = () => { tracks.forEach(t => hidden.add(t.key)); selectedKey = null; drawMap(); renderTrackList(); renderDetail(); };
+
+/* ---------- files panel ---------- */
+function renderFiles() {
+  const el = $("#files");
+  if (!datasets.length) { el.innerHTML = `<div class="empty">Files you add appear here. Your data never leaves this computer.</div>`; return; }
+  el.innerHTML = datasets.map(ds => {
+    const meta = `${ds.points.length.toLocaleString()} points${ds.skipped ? ` · ${ds.skipped.toLocaleString()} rows skipped (no coordinates)` : ""}`;
+    let mapping = "";
+    if (ds.kind === "rows") {
+      const opts = sel => `<option value="">(none)</option>` + ds.headers.filter(h => !String(h).startsWith("__")).map(h => `<option value="${esc(h)}"${h === sel ? " selected" : ""}>${esc(h)}</option>`).join("");
+      const fields = ds.map.lat === "__lat" ? [["time", "Time"], ["time2", "Time (2nd col)"], ["driver", "Driver"], ["speed", "Speed"]]
+        : [["lat", "Latitude"], ["lon", "Longitude"], ["latlon", "Lat,Lon (one col)"], ["time", "Time"], ["time2", "Time (2nd col)"], ["driver", "Driver"], ["speed", "Speed"]];
+      mapping = `<details${ds.points.length ? "" : " open"}><summary>Columns used</summary><div class="mapping">${fields.map(([f, label]) => `<span>${label}</span><select data-ds="${ds.id}" data-field="${f}">${opts(ds.map[f])}</select>`).join("")}</div></details>`;
+    }
+    return `<div class="file"><div class="top"><span class="name" title="${esc(ds.name)}">${esc(ds.name)}</span><button class="btn small" data-remove="${ds.id}" type="button">Remove</button></div><div class="meta">${meta}</div>${mapping}</div>`;
+  }).join("");
+}
+$("#files").addEventListener("change", e => {
+  const s = e.target.closest("select[data-ds]"); if (!s) return;
+  const ds = datasets.find(d => d.id === +s.dataset.ds);
+  ds.map[s.dataset.field] = s.value;
+  ds.points = rowsToPoints(ds);
+  rebuild(true);
+});
+$("#files").addEventListener("click", e => {
+  const b = e.target.closest("[data-remove]"); if (!b) return;
+  datasets = datasets.filter(d => d.id !== +b.dataset.remove);
+  rebuild(true);
+});
+$("#clearAll").onclick = () => { datasets = []; hidden.clear(); colorOf.clear(); selectedKey = null; $("#msgs").innerHTML = ""; rebuild(false); };
+
+$("#exportStops").onclick = () => {
+  const vis = tracks.filter(t => !hidden.has(t.key) && t.timed);
+  if (!vis.length) { note("There are no timed routes to export stops from."); return; }
+  const q = v => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [["Driver", "Date", "Stop", "Arrived", "Departed", "Minutes", "Latitude", "Longitude"].join(",")];
+  for (const tr of vis) tr.stops.forEach((s, k) => lines.push([q(tr.driver), q(dayKey(s.start)), k + 1, q(fmtTime(s.start)), q(fmtTime(s.end)), Math.round((s.end - s.start) / 60000), s.lat.toFixed(6), s.lon.toFixed(6)].join(",")));
+  const blob = new Blob([lines.join("\r\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `driver-stops-${dayKey(Date.now())}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+
+/* ---------- messages ---------- */
+function note(text, ok) {
+  const d = document.createElement("div");
+  d.className = "msg" + (ok ? " ok" : ""); d.textContent = text;
+  $("#msgs").appendChild(d);
+}
+
+/* ---------- playback ---------- */
+let playTr = null, playing = false, playT = 0, lastFrame = 0, raf = 0, cursor = null, trail = null;
+function setupPlayer(tr) {
+  const ok = tr && tr.timed && tr.pts.length > 1 && tr.end > tr.start;
+  $("#player").hidden = !ok;
+  if (cursor) { map.removeLayer(cursor); cursor = null; }
+  if (trail) { map.removeLayer(trail); trail = null; }
+  playTr = ok ? tr : null;
+  if (!ok) return;
+  playT = tr.start;
+  $("#playWho").textContent = tr.driver;
+  $("#playBtn").innerHTML = ICON_PLAY;
+  $("#scrub").value = 0;
+  const color = trackColor(tr.key);
+  cursor = L.marker([tr.pts[0].lat, tr.pts[0].lon], { icon: L.divIcon({ className: "", html: `<div class="cursor" style="background:${color}"></div>`, iconSize: [20, 20], iconAnchor: [10, 10] }), zIndexOffset: 1000, interactive: false }).addTo(map);
+  trail = L.polyline([], { color: "#111827", weight: 3, opacity: 0.75, dashArray: "1 6", lineCap: "round", interactive: false }).addTo(map);
+  updateCursor();
+}
+function posAt(tr, t) {
+  const p = tr.pts;
+  let lo = 0, hi = p.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (p[mid].t <= t) lo = mid; else hi = mid - 1; }
+  const a = p[lo], b = p[Math.min(lo + 1, p.length - 1)];
+  const f = b.t > a.t ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0;
+  return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f, i: lo };
+}
+function updateCursor() {
+  if (!playTr) return;
+  const tr = playTr, pos = posAt(tr, playT);
+  cursor.setLatLng([pos.lat, pos.lon]);
+  trail.setLatLngs(tr.pts.slice(0, pos.i + 1).map(p => [p.lat, p.lon]).concat([[pos.lat, pos.lon]]));
+  $("#scrub").value = Math.round(((playT - tr.start) / (tr.end - tr.start)) * 1000);
+  const stopNow = tr.stops.findIndex(s => playT >= s.start && playT <= s.end);
+  $("#clock").textContent = new Date(playT).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }) + (stopNow >= 0 ? ` · Stop ${stopNow + 1}` : "");
+}
+function frame(now) {
+  if (!playing || !playTr) return;
+  const dt = now - lastFrame; lastFrame = now;
+  playT += dt * +$("#rate").value;
+  if (playT >= playTr.end) { playT = playTr.end; updateCursor(); stopPlayback(); return; }
+  updateCursor();
+  const ll = cursor.getLatLng();
+  if (!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll, { animate: false });
+  raf = requestAnimationFrame(frame);
+}
+function stopPlayback() { playing = false; cancelAnimationFrame(raf); $("#playBtn").innerHTML = ICON_PLAY; $("#playBtn").setAttribute("aria-label", "Play"); }
+$("#playBtn").onclick = () => {
+  if (!playTr) return;
+  if (playing) return stopPlayback();
+  if (playT >= playTr.end) playT = playTr.start;
+  playing = true; lastFrame = performance.now();
+  $("#playBtn").innerHTML = ICON_PAUSE; $("#playBtn").setAttribute("aria-label", "Pause");
+  raf = requestAnimationFrame(frame);
+};
+$("#scrub").oninput = e => { if (!playTr) return; playT = playTr.start + (playTr.end - playTr.start) * (+e.target.value / 1000); updateCursor(); };
+
+/* ---------- sample data ---------- */
+function sampleData() {
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const make = (name, wps, startMin, stops) => {
+    const rows = []; let t = new Date(); t.setDate(t.getDate() - 1); t.setHours(7, 0, 0, 0); t = t.getTime() + startMin * 60000;
+    for (let i = 0; i < wps.length - 1; i++) {
+      const [a, b] = wps[i], [c, d] = wps[i + 1];
+      const steps = Math.max(2, Math.round(Math.hypot((c - a) * 111000, (d - b) * 85000) / 320));
+      for (let s = 0; s < steps; s++) { const f = s / steps; rows.push({ Driver: name, Time: new Date(t).toISOString(), Lat: a + (c - a) * f + (rnd() - .5) * 4e-4, Lon: b + (d - b) * f + (rnd() - .5) * 4e-4 }); t += 30000; }
+      if (stops[i + 1]) { const end = t + stops[i + 1] * 60000; while (t < end) { rows.push({ Driver: name, Time: new Date(t).toISOString(), Lat: c + (rnd() - .5) * 3e-4, Lon: d + (rnd() - .5) * 3e-4 }); t += 120000; } }
+    }
+    return rows;
+  };
+  const hub = [39.7392, -104.9903];
+  return [
+    ...make("Sample Truck 12", [hub, [39.761, -104.98], [39.78, -104.94], [39.75, -104.9], [39.71, -104.93], [39.695, -104.98], hub], 2, { 2: 18, 3: 25, 5: 12 }),
+    ...make("Sample Truck 7", [hub, [39.70, -105.03], [39.66, -105.01], [39.64, -104.96], [39.68, -104.92], hub], 22, { 1: 15, 3: 32, 4: 9 }),
+    ...make("Sample Van 3", [hub, [39.745, -105.04], [39.79, -105.06], [39.81, -105.02], [39.785, -104.995], hub], 45, { 2: 21, 3: 14, 4: 40 }),
+  ];
+}
+$("#sampleBtn").onclick = () => {
+  datasets = datasets.filter(d => d.name !== "Sample data (made up)");
+  const rows = sampleData();
+  addRowsDataset("Sample data (made up)", rows, Object.keys(rows[0]));
+  rebuild(true);
+};
+
+/* ---------- inputs ---------- */
+const fileIn = $("#fileIn");
+const openPicker = () => fileIn.click();
+$("#openBtn").onclick = openPicker; $("#openBtn2").onclick = openPicker;
+$("#drop").onclick = openPicker;
+$("#drop").onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPicker(); } };
+fileIn.onchange = () => { handleFiles([...fileIn.files]); fileIn.value = ""; };
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { dragDepth++; document.body.classList.add("dragging"); } });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging"); if (e.dataTransfer?.files?.length) handleFiles([...e.dataTransfer.files]); });
+$("#pasteBtn").onclick = () => {
+  const t = $("#pasteBox").value.trim(); if (!t) return;
+  try { parseDelimited(t, `Pasted data ${nextId}`); rebuild(true); $("#pasteBox").value = ""; } catch (e) { note(`Pasted data: ${e.message}`); }
+};
+
+$("#baseSel").onchange = e => setBase(e.target.value);
+$("#unitSel").value = S.units;
+$("#unitSel").onchange = e => { S.units = e.target.value; store.set("units", S.units); renderTrackList(); renderDetail(); drawMap(); };
+const bindNum = (id, key, storeKey, toVal) => {
+  const el = $(id); el.value = S[key];
+  el.onchange = () => { const v = +el.value; if (!(v > 0)) { el.value = S[key]; return; } S[key] = toVal ? toVal(v) : v; store.set(storeKey, S[key]); rebuild(false); };
+};
+bindNum("#stopMin", "stopMin", "stopMin");
+bindNum("#stopRadius", "stopRadiusFt", "stopRadiusFt");
+const bindChk = (id, key, fit) => { const el = $(id); el.checked = S[key]; el.onchange = () => { S[key] = el.checked; store.set(key, S[key]); rebuild(fit); }; };
+bindChk("#byDay", "byDay", false);
+bindChk("#showStops", "showStops", false);
+bindChk("#dropJumps", "dropJumps", false);
+</script>
+</body>
+</html>
